@@ -1,15 +1,35 @@
+//! A easy i18n tool
+//! ### Example
+//! ``` rust
+//! use easy_i18n::{self, i18n, I18N};
+//! use std::path::Path;
+//! // load source
+//! easy_i18n::set_source(Path::new("./src/source"));
+//! // set lang
+//! easy_i18n::set_lang("EN");
+//!
+//! i18n!("这是一个测试"); // This is a test
+//!
+//! // Sometimes, the same text has different translation results in different contexts. At this time, we can set different namespaces
+//! i18n!("这是一个测试", ns="namespace1"); // This is a test, but it is different
+//!
+//! // If there is a dynamic value in the text, we can use %1, %2, %3.. as a placeholder, where the number represents the position of the dynamic value
+//! i18n!("他的成绩是，语文：%1, 数学：%2", 88, 100); // His grades are Chinese: 88, Mathematics: 100
+//!
+//! // If you have different translation results in other contexts, you can set the namespace
+//! i18n!("他的成绩是，语文：%1, 数学：%2", ns="namespace1", 88, 100); // His grades are Chinese: 88, Mathematics: 100, and the test is not bad.
+//! ```
 use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
 use regex::{Captures, Regex};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::{collections::HashMap, fs, fs::File, io::BufReader, path::Path};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::Mutex;
 
 const INTER_REG: Lazy<Regex> = Lazy::new(|| Regex::new(r"%\d+").unwrap());
 
-static I18N:Lazy<Mutex<I18n>> = Lazy::new(|| {
-    Mutex::new(I18n::new("zh"))
+pub static I18N:Lazy<Mutex<I18n>> = Lazy::new(|| {
+    Mutex::new(I18n::new("cn"))
 });
 
 pub fn set_lang(lang:&str) {
@@ -34,13 +54,13 @@ pub struct I18n {
 impl I18n {
     pub fn new(lang:&str) -> I18n {
         I18n {
-            lang:lang.to_string(),
+            lang:lang.to_uppercase(),
             source: HashMap::new(),
         }
     }
 
     pub fn set_lang(&mut self, lang:&str){
-        self.lang = lang.to_string();
+        self.lang = lang.to_uppercase();
     }
 
     pub fn set_source(&mut self, path:&Path){
@@ -101,7 +121,7 @@ fn load_source(path:&Path) -> HashMap<String, Source> {
                     {
                         if file_type.to_lowercase() == "json".to_string() {
                             if let Ok(source) = Source::from_path(&path) {
-                                map.insert(file_name.to_lowercase(), source);
+                                map.insert(file_name.to_uppercase(), source);
                             }
                         }
                     }
@@ -115,10 +135,13 @@ fn load_source(path:&Path) -> HashMap<String, Source> {
 #[macro_export]
 #[allow(clippy::crate_in_macro_def)]
 macro_rules! i18n {
-    ($key:expr) => {
+    ($key:expr, ns=$ns:expr, $($args:expr),+ $(,)?) => {
         {
             let i18n = I18N.lock().unwrap();
-            i18n.translate($key, None)
+            let text = i18n.translate($key, Some($ns.to_string()));
+            let mut vals = vec![];
+            $(vals.push($args.to_string());)+
+            i18n.trans_with_inter($key, vals, Some($ns.to_string()))
         }
     };
 
@@ -129,23 +152,20 @@ macro_rules! i18n {
         }
     };
 
-    ($key:expr, $($args:expr),*) => {
+    ($key:expr, $($args:expr),+) => {
         {
             let i18n = I18N.lock().unwrap();
             let text = i18n.translate($key, None);
             let mut vals = vec![];
-            $(vals.push($args.to_string());)*
+            $(vals.push($args.to_string());)+
             i18n.trans_with_inter($key, vals, None)
         }
     };
 
-    ($key:expr, $($args:expr)*, ns=$ns:expr) => {
+    ($key:expr) => {
         {
             let i18n = I18N.lock().unwrap();
-            let text = i18n.translate($key, Some($ns.to_string()));
-            let mut vals = vec![];
-            $(vals.push($args.to_string());)*
-            i18n.trans_with_inter($key, vals, None)
+            i18n.translate($key, None)
         }
     };
 }
@@ -156,10 +176,9 @@ mod tests {
 
     #[test]
     fn it_works() {
-        set_lang("en");
         set_source(Path::new("./source"));
+        set_lang("en");
         dbg!(i18n!("这是一个测试"));
         dbg!(i18n!("这是一个测试", ns="namespace1"));
-        dbg!(i18n!("这是一个有插值的%1测试%2", 11, 22));
     }
 }
